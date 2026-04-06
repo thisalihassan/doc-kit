@@ -42,8 +42,9 @@ jobs:
           name: commit
           path: commit
 
-      # If we are running from a PR (a pull_request event), we
-      # want the SHA used by the most recent `push` run
+      # If we are running from a PR (a pull_request event), we want the SHA
+      # used by the matching `main` push run in this repository. Forks have
+      # their own workflow database IDs, so look up the workflow by file name.
       - name: Get latest `main` run
         if: ${{ github.event_name == 'pull_request' }}
         id: main
@@ -51,13 +52,25 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # `174604400` refers to `generate.yml`'s workflow ID, available at https://api.github.com/repos/nodejs/doc-kit/actions/workflows/generate.yml
-          # The `databaseId` is a given runs run ID (Ref: https://docs.github.com/en/enterprise-cloud@latest/graphql/reference/objects#workflowrun)
-          ID=$(gh run list --repo $GITHUB_REPOSITORY -c $BASE_SHA -w 174604400 -L 1 --json databaseId --jq ".[].databaseId")
-          echo "run_id=$ID" >> $GITHUB_OUTPUT
+          ID=$(
+            gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              -c "$BASE_SHA" \
+              --workflow generate.yml \
+              -L 1 \
+              --json databaseId \
+              --jq '.[0].databaseId // ""'
+          )
+          echo "run_id=$ID" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$ID" ]; then
+            echo "Using base run: $ID"
+          else
+            echo "No matching main run found; comparison steps will be skipped."
+          fi
 
       - name: Download metadata artifact
-        if: ${{ github.event_name == 'pull_request' }}
+        if: ${{ github.event_name == 'pull_request' && steps.main.outputs.run_id }}
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: commit
@@ -67,7 +80,11 @@ jobs:
       - id: pr
         if: ${{ github.event_name == 'pull_request' }}
         run: |
-          SHA=$(cat commit)
+          if [ -f commit ]; then
+            SHA=$(cat commit)
+          else
+            SHA=$(git ls-remote https://github.com/nodejs/node.git HEAD | awk '{print $1}')
+          fi
           echo "sha=$SHA" >> "$GITHUB_OUTPUT"
 
   generate:
@@ -171,8 +188,19 @@ jobs:
         run: |
           node scripts/comparators/${{ matrix.compare }}.mjs > out/comparison.txt
 
+      - name: Validate anchor links
+        if: ${{ matrix.target == 'legacy-html' }}
+        env:
+          GENERATOR: ${{ matrix.target }}
+        shell: bash
+        run: |
+          set -o pipefail
+          node scripts/comparators/validate-links.mjs | tee -a out/comparison.txt
+
       - name: Upload ${{ matrix.target }} artifacts
+        if: ${{ always() }}
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ${{ matrix.target }}
           path: out
+          if-no-files-found: ignore
