@@ -4,7 +4,7 @@ import { pathToFileURL } from 'node:url';
 
 import { BASE, HEAD, TITLE } from '../constants.mjs';
 
-const HREF_REGEX = /\bhref=(?:(["'])(.*?)\1|([^\s>]+))/g;
+const HREF_REGEX = /<[^>]*\bhref=(?:(["'])(.*?)\1|([^\s>]+))/g;
 const ID_UNQUOTED_REGEX = /\bid=([a-zA-Z0-9_.:-]+)(?=[\s>]|$)/g;
 const DOC_TARGET_REGEX =
   /^(?<target>[^#?]+?\.(?:html|md))(?:#(?<fragment>[a-zA-Z0-9_.:-]+))?$/;
